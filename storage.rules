@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // รูปสินค้า — ตอนเริ่มต้นเปิดให้อ่าน/เขียนได้เลยเพื่อทดสอบ
+    // จำกัดชนิดไฟล์เป็นรูปภาพ และขนาดไม่เกิน 2MB ต่อไฟล์ (กันอัปโหลดผิดพลาด)
+    // ⚠️ ก่อนใช้งานจริง ควรเปลี่ยน allow write เป็น if request.auth != null && ...
+    match /products/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 2 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
