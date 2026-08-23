@@ -1,5 +1,5 @@
-<html lang="th">
 <!DOCTYPE html>
+<html lang="th">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,12 +17,9 @@ import ReactDOM from "https://esm.sh/react-dom@18/client";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-storage.js";
-const {
-  useState,
-  useEffect,
-  useMemo,
-  useRef
-} = React;
+
+const { useState, useEffect, useMemo, useRef } = React;
+
 const firebaseConfig = {
   apiKey: "AIzaSyC7KO82gNgJJDFK8zBUaVFOQPAXuzcOPv8",
   authDomain: "yokmanee-shop.firebaseapp.com",
@@ -30,10 +27,10 @@ const firebaseConfig = {
   storageBucket: "yokmanee-shop.firebasestorage.app",
   messagingSenderId: "1005934411766",
   appId: "1:1005934411766:web:8ea01c6f963c826ad3d1d7",
-  measurementId: "G-C7FFW84M26"
+  measurementId: "G-C7FFW84M26",
 };
+
 const app = initializeApp(firebaseConfig);
-// (React, ReactDOM already imported above)
 const db = getFirestore(app);
 const storage = getStorage(app);
 
@@ -270,8 +267,8 @@ const seedProducts = () => [{
 }];
 const money = n => n.toLocaleString("th-TH");
 const combinedQty = p => Object.values(p.stock).reduce((s, v) => s + (v || 0), 0);
-const LOW_UNIT = 5;
-const LOW_TOTAL = 10;
+const DEFAULT_MIN_UNIT = 5;
+const DEFAULT_MIN_TOTAL = 10;
 const isToday = iso => {
   const d = new Date(iso),
     n = new Date();
@@ -409,7 +406,7 @@ function HangTag({
 }
 function StatusChip({
   qty,
-  unit = LOW_UNIT
+  unit = DEFAULT_MIN_UNIT
 }) {
   const state = qty <= 0 ? "out" : qty < unit ? "low" : "ok";
   const map = {
@@ -508,6 +505,10 @@ function BalanceCell({
 function StockApp() {
   const [branches, setBranches] = useState(DEFAULT_BRANCHES);
   const [categories, setCategories] = useState(DEFAULT_CATS);
+  const [settings, setSettings] = useState({
+    minUnit: DEFAULT_MIN_UNIT,
+    minTotal: DEFAULT_MIN_TOTAL
+  });
   const [products, setProducts] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [view, setView] = useState("dashboard");
@@ -533,6 +534,10 @@ function StockApp() {
         setTransactions(parsed.transactions || []);
         setBranches(parsed.branches && parsed.branches.length ? parsed.branches : DEFAULT_BRANCHES);
         setCategories(parsed.categories && parsed.categories.length ? parsed.categories : DEFAULT_CATS);
+        setSettings({
+          minUnit: Number.isFinite(parsed.settings?.minUnit) ? parsed.settings.minUnit : DEFAULT_MIN_UNIT,
+          minTotal: Number.isFinite(parsed.settings?.minTotal) ? parsed.settings.minTotal : DEFAULT_MIN_TOTAL
+        });
       } else {
         setProducts(seedProducts());
         setTransactions([]);
@@ -560,14 +565,15 @@ function StockApp() {
           products,
           transactions,
           branches,
-          categories
+          categories,
+          settings
         });
       } catch (e) {
         console.error("Firestore save error:", e);
       }
     }, 400);
     return () => clearTimeout(saveTimer.current);
-  }, [products, transactions, branches, categories, loaded]);
+  }, [products, transactions, branches, categories, settings, loaded]);
   const branchName = id => branches.find(b => b.id === id)?.name || id;
   const removeProduct = id => setProducts(prev => {
     const target = prev.find(p => p.id === id);
@@ -632,7 +638,7 @@ function StockApp() {
     if (!products) return null;
     const totalUnits = products.reduce((s, p) => s + combinedQty(p), 0);
     const totalValue = products.reduce((s, p) => s + combinedQty(p) * p.price, 0);
-    const lowStock = products.filter(p => combinedQty(p) < LOW_TOTAL);
+    const lowStock = products.filter(p => combinedQty(p) < settings.minTotal);
     const perBranch = branches.map(b => ({
       ...b,
       units: products.reduce((s, p) => s + (p.stock[b.id] || 0), 0),
@@ -652,7 +658,7 @@ function StockApp() {
       inToday,
       outToday
     };
-  }, [products, transactions, branches]);
+  }, [products, transactions, branches, settings]);
   if (!products || !stats) {
     return /*#__PURE__*/React.createElement("div", {
       className: "min-h-screen flex items-center justify-center tag-font-body",
@@ -677,6 +683,10 @@ function StockApp() {
     k: "history",
     label: "ประวัติ",
     icon: "↺"
+  }, {
+    k: "settings",
+    label: "ตั้งค่า",
+    icon: "⚙"
   }];
   return /*#__PURE__*/React.createElement("div", {
     className: "min-h-screen tag-font-body",
@@ -741,7 +751,8 @@ function StockApp() {
     onGoToStock: id => {
       setView("stock");
       setBranch(id);
-    }
+    },
+    settings: settings
   }), view === "stock" && /*#__PURE__*/React.createElement(StockView, {
     branches: branches,
     branch: branch,
@@ -761,11 +772,15 @@ function StockApp() {
       type
     }),
     onEdit: product => setEditProduct(product),
-    onRenameBranch: b => setRenameBranch(b)
+    onRenameBranch: b => setRenameBranch(b),
+    settings: settings
   }), view === "history" && /*#__PURE__*/React.createElement(HistoryView, {
     transactions: transactions,
     branches: branches,
     branchName: branchName
+  }), view === "settings" && /*#__PURE__*/React.createElement(SettingsView, {
+    settings: settings,
+    onSave: setSettings
   })), /*#__PURE__*/React.createElement("footer", {
     className: "hidden sm:block tag-font-mono text-xs text-center py-6",
     style: {
@@ -825,7 +840,8 @@ function Dashboard({
   stats,
   transactions,
   branchName,
-  onGoToStock
+  onGoToStock,
+  settings
 }) {
   const recent = transactions.slice(0, 6);
   return /*#__PURE__*/React.createElement("div", {
@@ -924,7 +940,7 @@ function Dashboard({
     style: {
       color: C.wine
     }
-  }, "รวม < ", LOW_TOTAL)), stats.lowStock.length === 0 ? /*#__PURE__*/React.createElement("p", {
+  }, "รวม < ", settings.minTotal)), stats.lowStock.length === 0 ? /*#__PURE__*/React.createElement("p", {
     className: "text-sm py-4",
     style: {
       color: C.brassDark
@@ -957,7 +973,7 @@ function Dashboard({
     className: "tag-font-mono text-sm hidden sm:inline"
   }, combinedQty(p), " ชิ้น"), /*#__PURE__*/React.createElement(StatusChip, {
     qty: combinedQty(p),
-    unit: LOW_TOTAL
+    unit: settings.minTotal
   })))))), /*#__PURE__*/React.createElement(HangTag, {
     className: "p-5 pt-6 sm:p-6 sm:pt-7"
   }, /*#__PURE__*/React.createElement("div", {
@@ -1008,7 +1024,8 @@ function StockView({
   onAddCategory,
   onOpenMove,
   onEdit,
-  onRenameBranch
+  onRenameBranch,
+  settings
 }) {
   const branchName = id => branches.find(b => b.id === id)?.name || id;
   return /*#__PURE__*/React.createElement("div", {
@@ -1135,7 +1152,7 @@ function StockView({
       onMove: type => onOpenMove(p, b.id, type)
     }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StatusChip, {
       qty: total,
-      unit: LOW_TOTAL
+      unit: settings.minTotal
     }), /*#__PURE__*/React.createElement("p", {
       className: "tag-font-mono text-xs mt-1",
       style: {
@@ -1146,7 +1163,7 @@ function StockView({
       onMove: type => onOpenMove(p, branch, type)
     })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StatusChip, {
       qty: branchQty,
-      unit: LOW_UNIT
+      unit: settings.minUnit
     }))), /*#__PURE__*/React.createElement("div", {
       className: "flex justify-end gap-2"
     }, /*#__PURE__*/React.createElement("button", {
@@ -1195,7 +1212,7 @@ function StockView({
       className: "flex-shrink-0 text-right"
     }, /*#__PURE__*/React.createElement(StatusChip, {
       qty: branch === "all" ? total : p.stock[branch] || 0,
-      unit: branch === "all" ? LOW_TOTAL : LOW_UNIT
+      unit: branch === "all" ? settings.minTotal : settings.minUnit
     }))), /*#__PURE__*/React.createElement("div", {
       className: "tag-perf pt-3 space-y-2"
     }, (branch === "all" ? branches : branches.filter(b => b.id === branch)).map(b => /*#__PURE__*/React.createElement("div", {
@@ -1510,6 +1527,7 @@ function ProductModal({
     return base;
   });
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const fileRef = useRef(null);
 
   // add mode: SKU always tracks the selected category automatically
@@ -1522,19 +1540,24 @@ function ProductModal({
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
+    setUploadError("");
     try {
+      // กันไม่ให้ค้างตลอดไปถ้าเน็ตช้า/บล็อก — ยกเลิกเองหลัง 20 วินาที
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("หมดเวลาอัปโหลด (เกิน 20 วินาที) — เช็คอินเทอร์เน็ต หรือว่าเปิดใช้งาน Firebase Storage ในคอนโซลแล้วหรือยัง")), 20000));
       const {
         url,
         path
-      } = await uploadProductImage(file);
+      } = await Promise.race([uploadProductImage(file), timeout]);
       // ลบรูปเก่าออกจาก Storage เพื่อไม่ให้ไฟล์ค้าง (ถ้ามี)
       if (imagePath) deleteProductImage(imagePath);
       setImage(url);
       setImagePath(path);
     } catch (err) {
       console.error("อัปโหลดรูปภาพไม่สำเร็จ:", err);
+      setUploadError(err?.message || "อัปโหลดรูปภาพไม่สำเร็จ ลองใหม่อีกครั้ง");
     }
     setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
   };
   const handleRemoveImage = () => {
     if (imagePath) deleteProductImage(imagePath);
@@ -1637,7 +1660,12 @@ function ProductModal({
     accept: "image/*",
     className: "hidden",
     onChange: handleFile
-  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }), uploadError && /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-body text-xs max-w-[220px]",
+    style: {
+      color: C.wine
+    }
+  }, uploadError))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     className: "block mb-1",
     style: {
       color: C.brassDark
@@ -1844,6 +1872,95 @@ function ProductModal({
       color: canSave ? C.ink : C.brassDark
     }
   }, isEdit ? "บันทึกการแก้ไข" : "บันทึกสินค้า"))));
+}
+function SettingsView({
+  settings,
+  onSave
+}) {
+  const [minUnit, setMinUnit] = useState(String(settings.minUnit));
+  const [minTotal, setMinTotal] = useState(String(settings.minTotal));
+  const [saved, setSaved] = useState(false);
+  const canSave = minUnit !== "" && minTotal !== "" && Number(minUnit) >= 0 && Number(minTotal) >= 0;
+  const save = () => {
+    if (!canSave) return;
+    onSave({
+      minUnit: parseInt(minUnit, 10) || 0,
+      minTotal: parseInt(minTotal, 10) || 0
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "max-w-md"
+  }, /*#__PURE__*/React.createElement(HangTag, {
+    className: "p-5 sm:p-6 space-y-5"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
+    className: "tag-font-display text-xl font-semibold"
+  }, "ตั้งค่าเกณฑ์สต็อกต่ำ"), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-body text-sm mt-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "กำหนดจำนวนที่ถือว่า \"ใกล้หมด\" — ใช้แจ้งเตือนบนแดชบอร์ดและป้ายสถานะสินค้าทั่วทั้งระบบ")), /*#__PURE__*/React.createElement("div", {
+    className: "tag-perf pt-4"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1 tag-font-body text-sm",
+    style: {
+      color: C.brassDark
+    }
+  }, "เกณฑ์ต่ำ — ต่อสาขา (ชิ้น)"), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-body text-xs mb-2",
+    style: {
+      color: C.brassDark
+    }
+  }, "ถ้าสต็อกของสาขาใดสาขาหนึ่งน้อยกว่าค่านี้ จะขึ้นป้าย \"ใกล้หมด\" ที่สาขานั้น"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "numeric",
+    min: "0",
+    value: minUnit,
+    onChange: e => setMinUnit(e.target.value),
+    className: "w-32 px-3 py-2.5 rounded border tag-font-mono text-base",
+    style: {
+      borderColor: C.line
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "tag-perf pt-4"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1 tag-font-body text-sm",
+    style: {
+      color: C.brassDark
+    }
+  }, "เกณฑ์ต่ำ — รวมทุกสาขา (ชิ้น)"), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-body text-xs mb-2",
+    style: {
+      color: C.brassDark
+    }
+  }, "ถ้าสต็อกรวมของสินค้าชิ้นนั้น (ทุกสาขารวมกัน) น้อยกว่าค่านี้ จะถูกจัดเข้ารายการ \"สินค้าใกล้หมด\" บนแดชบอร์ด"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "numeric",
+    min: "0",
+    value: minTotal,
+    onChange: e => setMinTotal(e.target.value),
+    className: "w-32 px-3 py-2.5 rounded border tag-font-mono text-base",
+    style: {
+      borderColor: C.line
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "tag-perf pt-4 flex items-center gap-3"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: save,
+    disabled: !canSave,
+    className: "px-5 py-2.5 rounded-md text-sm font-medium",
+    style: {
+      background: canSave ? C.brass : C.paperDark,
+      color: canSave ? C.ink : C.brassDark
+    }
+  }, "บันทึกการตั้งค่า"), saved && /*#__PURE__*/React.createElement("span", {
+    className: "tag-font-body text-sm",
+    style: {
+      color: C.moss
+    }
+  }, "บันทึกแล้ว ✓"))));
 }
 function RenameBranchModal({
   branch,
