@@ -438,13 +438,19 @@ function ProductThumb({
 function BalanceCell({
   qty,
   onMove,
-  big = false
+  onTransfer,
+  big = false,
+  minUnit
 }) {
   const btn = big ? "w-8 h-8 text-sm" : "w-7 h-7 text-xs";
+  const color = minUnit == null ? C.ink : qty <= 0 ? C.wine : qty < minUnit ? C.brassDark : C.ink;
   return /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-2"
   }, /*#__PURE__*/React.createElement("span", {
-    className: `tag-font-mono font-semibold text-right ${big ? "text-base w-10" : "text-sm w-8"}`
+    className: `tag-font-mono font-semibold text-right ${big ? "text-base w-10" : "text-sm w-8"}`,
+    style: {
+      color
+    }
   }, qty), /*#__PURE__*/React.createElement("button", {
     onClick: () => onMove("in"),
     title: "รับเข้า",
@@ -461,7 +467,16 @@ function BalanceCell({
       background: "#F3E0E0",
       color: C.wine
     }
-  }, "▼"));
+  }, "▼"), onTransfer && /*#__PURE__*/React.createElement("button", {
+    onClick: onTransfer,
+    title: "ย้ายไปสาขาอื่น",
+    disabled: qty <= 0,
+    className: `${btn} rounded flex items-center justify-center font-bold active:scale-95 transition disabled:opacity-30`,
+    style: {
+      background: "#E7EEF3",
+      color: C.denim
+    }
+  }, "⇄"));
 }
 function StockApp() {
   const [branches, setBranches] = useState(DEFAULT_BRANCHES);
@@ -479,6 +494,7 @@ function StockApp() {
   const [editProduct, setEditProduct] = useState(null);
   const [renameBranch, setRenameBranch] = useState(null);
   const [moveCtx, setMoveCtx] = useState(null);
+  const [transferCtx, setTransferCtx] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const saveTimer = useRef(null);
@@ -581,6 +597,59 @@ function StockApp() {
       qty,
       note: note || "",
       at: new Date().toISOString()
+    }, ...prev]);
+    return {
+      ok: true
+    };
+  };
+
+  // ย้ายสต็อกจากสาขาหนึ่งไปอีกสาขา — ตัดออกจากต้นทางและเพิ่มให้ปลายทางพร้อมกันในทีเดียว
+  // สต็อกทั้งสองฝั่งปรับให้อัตโนมัติ ไม่ต้องกดรับเข้า/ตัดออกแยกสองรอบ
+  const commitTransfer = (product, fromBranchId, toBranchId, qty, note) => {
+    if (!qty || qty <= 0) return {
+      ok: false,
+      error: "กรุณาระบุจำนวนมากกว่า 0"
+    };
+    if (!toBranchId || fromBranchId === toBranchId) return {
+      ok: false,
+      error: "กรุณาเลือกสาขาปลายทางที่ต่างจากสาขาต้นทาง"
+    };
+    const fromCurrent = product.stock[fromBranchId] || 0;
+    if (qty > fromCurrent) return {
+      ok: false,
+      error: `คงเหลือที่สาขาต้นทางมีเพียง ${fromCurrent} ชิ้น ไม่สามารถย้าย ${qty} ชิ้นได้`
+    };
+    const toCurrent = product.stock[toBranchId] || 0;
+    setProducts(prev => prev.map(p => p.id === product.id ? {
+      ...p,
+      stock: {
+        ...p.stock,
+        [fromBranchId]: fromCurrent - qty,
+        [toBranchId]: toCurrent + qty
+      }
+    } : p));
+    const fromName = branchName(fromBranchId);
+    const toName = branchName(toBranchId);
+    const stamp = new Date().toISOString();
+    const base = {
+      productId: product.id,
+      productName: product.name,
+      sku: product.sku,
+      qty,
+      at: stamp
+    };
+    setTransactions(prev => [{
+      id: "t" + Date.now() + Math.random().toString(36).slice(2, 6),
+      ...base,
+      branchId: toBranchId,
+      type: "in",
+      note: `รับโอนจาก${fromName}${note ? " · " + note : ""}`
+    }, {
+      id: "t" + (Date.now() - 1) + Math.random().toString(36).slice(2, 6),
+      ...base,
+      branchId: fromBranchId,
+      type: "out",
+      note: `โอนไป${toName}${note ? " · " + note : ""}`
     }, ...prev]);
     return {
       ok: true
@@ -728,6 +797,10 @@ function StockApp() {
       branchId,
       type
     }),
+    onOpenTransfer: (product, fromBranchId) => setTransferCtx({
+      product,
+      fromBranchId
+    }),
     onEdit: product => setEditProduct(product),
     onRenameBranch: b => setRenameBranch(b),
     settings: settings
@@ -748,6 +821,12 @@ function StockApp() {
     branchName: branchName,
     onClose: () => setMoveCtx(null),
     onConfirm: (qty, note) => commitMove(moveCtx.product, moveCtx.branchId, moveCtx.type, qty, note)
+  }), transferCtx && /*#__PURE__*/React.createElement(TransferModal, {
+    ctx: transferCtx,
+    branches: branches,
+    branchName: branchName,
+    onClose: () => setTransferCtx(null),
+    onConfirm: (toBranchId, qty, note) => commitTransfer(transferCtx.product, transferCtx.fromBranchId, toBranchId, qty, note)
   }), showAdd && /*#__PURE__*/React.createElement(ProductModal, {
     mode: "add",
     branches: branches,
@@ -980,6 +1059,7 @@ function StockView({
   categories,
   onAddCategory,
   onOpenMove,
+  onOpenTransfer,
   onEdit,
   onRenameBranch,
   settings
@@ -1110,7 +1190,9 @@ function StockView({
       key: b.id
     }, /*#__PURE__*/React.createElement(BalanceCell, {
       qty: p.stock[b.id] || 0,
-      onMove: type => onOpenMove(p, b.id, type)
+      onMove: type => onOpenMove(p, b.id, type),
+      onTransfer: branches.length > 1 ? () => onOpenTransfer(p, b.id) : null,
+      minUnit: settings.minUnit
     }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StatusChip, {
       qty: total,
       unit: settings.minTotal
@@ -1121,7 +1203,9 @@ function StockView({
       }
     }, total, " ชิ้นรวม"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(BalanceCell, {
       qty: branchQty,
-      onMove: type => onOpenMove(p, branch, type)
+      onMove: type => onOpenMove(p, branch, type),
+      onTransfer: branches.length > 1 ? () => onOpenTransfer(p, branch) : null,
+      minUnit: settings.minUnit
     })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StatusChip, {
       qty: branchQty,
       unit: settings.minUnit
@@ -1187,7 +1271,9 @@ function StockView({
     }, b.name), /*#__PURE__*/React.createElement(BalanceCell, {
       qty: p.stock[b.id] || 0,
       onMove: type => onOpenMove(p, b.id, type),
-      big: true
+      onTransfer: branches.length > 1 ? () => onOpenTransfer(p, b.id) : null,
+      big: true,
+      minUnit: settings.minUnit
     }))), branch === "all" && /*#__PURE__*/React.createElement("div", {
       className: "flex items-center justify-between pt-1 tag-perf"
     }, /*#__PURE__*/React.createElement("span", {
@@ -1457,6 +1543,142 @@ function MoveModal({
       color: "#FFFFFF"
     }
   }, "ยืนยัน", isIn ? "รับเข้า" : "ตัดออก"))));
+}
+
+// ย้ายสต็อกของสินค้าชิ้นเดียวจากสาขาต้นทางไปสาขาปลายทาง — ตัดออก+เพิ่มเข้าให้อัตโนมัติในคลิกเดียว
+function TransferModal({
+  ctx,
+  branches,
+  branchName,
+  onClose,
+  onConfirm
+}) {
+  const {
+    product,
+    fromBranchId
+  } = ctx;
+  const otherBranches = branches.filter(b => b.id !== fromBranchId);
+  const [toBranchId, setToBranchId] = useState(otherBranches[0]?.id || "");
+  const [qty, setQty] = useState("1");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const current = product.stock[fromBranchId] || 0;
+  const submit = () => {
+    const n = parseInt(qty || "0", 10);
+    const res = onConfirm(toBranchId, n, note);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    onClose();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4",
+    style: {
+      background: "rgba(35,38,43,0.55)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-full sm:max-w-sm rounded-t-2xl sm:rounded-lg p-6 relative max-h-[90vh] overflow-y-auto",
+    style: {
+      background: C.paper
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "hidden sm:block absolute -top-2 left-6 tag-hole",
+    style: {
+      background: C.paper
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-mono text-xs uppercase tracking-wide",
+    style: {
+      color: C.denim
+    }
+  }, "ย้ายสต็อกไปสาขาอื่น"), /*#__PURE__*/React.createElement("h3", {
+    className: "tag-font-display text-lg font-semibold mt-1 mb-1"
+  }, product.name), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-mono text-xs mb-4",
+    style: {
+      color: C.brassDark
+    }
+  }, "ต้นทาง ", branchName(fromBranchId), " · คงเหลือ ", current, " ชิ้น"), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-3 tag-font-body text-sm"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "สาขาปลายทาง"), otherBranches.length > 0 ? /*#__PURE__*/React.createElement("select", {
+    value: toBranchId,
+    onChange: e => {
+      setToBranchId(e.target.value);
+      setError("");
+    },
+    className: "w-full px-3 py-2.5 rounded border tag-font-body text-sm bg-white",
+    style: {
+      borderColor: C.line
+    }
+  }, otherBranches.map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name))) : /*#__PURE__*/React.createElement("p", {
+    className: "text-xs",
+    style: {
+      color: C.wine
+    }
+  }, "ไม่มีสาขาอื่นให้ย้ายไป")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "จำนวน"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "1",
+    max: current,
+    inputMode: "numeric",
+    value: qty,
+    onChange: e => {
+      setQty(e.target.value);
+      setError("");
+    },
+    className: "w-full px-3 py-2.5 rounded border tag-font-mono text-base",
+    style: {
+      borderColor: C.line
+    },
+    autoFocus: true
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "หมายเหตุ (ถ้ามี)"), /*#__PURE__*/React.createElement("input", {
+    value: note,
+    onChange: e => setNote(e.target.value),
+    placeholder: "เช่น เกลี่ยสต็อกให้เท่ากัน",
+    className: "w-full px-3 py-2.5 rounded border",
+    style: {
+      borderColor: C.line
+    }
+  })), error && /*#__PURE__*/React.createElement("p", {
+    className: "text-xs",
+    style: {
+      color: C.wine
+    }
+  }, error)), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-3 mt-6"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    className: "flex-1 py-3 sm:py-2 rounded-md text-sm border",
+    style: {
+      borderColor: C.line
+    }
+  }, "ยกเลิก"), /*#__PURE__*/React.createElement("button", {
+    onClick: submit,
+    disabled: otherBranches.length === 0,
+    className: "flex-1 py-3 sm:py-2 rounded-md text-sm font-medium disabled:opacity-40",
+    style: {
+      background: C.denim,
+      color: "#FFFFFF"
+    }
+  }, "ยืนยันย้ายสต็อก"))));
 }
 function ProductModal({
   mode,
