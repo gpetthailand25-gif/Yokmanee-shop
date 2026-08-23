@@ -7,6 +7,8 @@
 
 <!-- Tailwind CSS (utility classes used throughout the app) -->
 <script src="https://cdn.tailwindcss.com"></script>
+<!-- SheetJS: used to export stock data to an .xlsx file -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -43,22 +45,24 @@ const STOCK_DOC = doc(db, "stock", "main");
    so nothing overlaps or scrolls sideways on a small screen.
 ------------------------------------ */
 const C = {
-  ink: "#23262B",
-  paper: "#F5F1E8",
-  paperDark: "#EAE3D4",
-  brass: "#B8935A",
-  brassDark: "#8C6D3F",
-  denim: "#3F5568",
-  denimDark: "#2C3E4C",
-  moss: "#5B6B4F",
-  wine: "#7A2E2E",
-  line: "#D8CFBA"
+  ink: "#0F172A",
+  paper: "#FFFFFF",
+  paperDark: "#EEF2FF",
+  brass: "#FF7A00",
+  brassDark: "#B45309",
+  denim: "#2563EB",
+  denimDark: "#1D4ED8",
+  moss: "#16A34A",
+  wine: "#DC2626",
+  line: "#CBD5E1"
 };
 const FONT_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Taviraj:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-.tag-font-display{font-family:'Taviraj',serif;}
-.tag-font-body{font-family:'IBM Plex Sans Thai','IBM Plex Sans',sans-serif;}
-.tag-font-mono{font-family:'IBM Plex Mono',monospace;}
+.tag-font-display{font-family:'Taviraj',serif;font-weight:700;}
+.tag-font-body{font-family:'IBM Plex Sans Thai','IBM Plex Sans',sans-serif;font-weight:500;}
+.tag-font-mono{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+h1,h2,h3{font-weight:700;}
+body{-webkit-font-smoothing:antialiased;}
 .tag-hole{width:14px;height:14px;border-radius:50%;background:${C.paper};box-shadow:inset 0 1px 3px rgba(0,0,0,.35);}
 .tag-perf{border-top:1.5px dashed ${C.line};}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
@@ -98,6 +102,8 @@ const DEFAULT_CATS = [{
   prefix: "HD"
 }];
 const SIZE_PRESETS = ["Free Size", "XS", "S", "M", "L", "XL", "XXL"];
+const PRODUCT_STATUSES = [{ value: "active", label: "ขายอยู่" }, { value: "discontinued", label: "เลิกขาย" }];
+const productStatusLabel = s => PRODUCT_STATUSES.find(x => x.value === s)?.label || "ขายอยู่";
 const NEW_CAT_VALUE = "__new_category__";
 
 // build the next SKU for a category, e.g. TS-011, based on how many SKUs already use that prefix
@@ -129,6 +135,7 @@ const seedProducts = () => [{
   category: "เสื้อยืด",
   price: 259,
   image: null,
+  status: "active",
   size: "M",
   chest: "36-38",
   stock: {
@@ -143,6 +150,7 @@ const seedProducts = () => [{
   category: "เสื้อเชิ้ต",
   price: 590,
   image: null,
+  status: "active",
   size: "L",
   chest: "40",
   stock: {
@@ -157,6 +165,7 @@ const seedProducts = () => [{
   category: "กางเกงยีนส์",
   price: 890,
   image: null,
+  status: "active",
   size: "30",
   chest: null,
   stock: {
@@ -171,6 +180,7 @@ const seedProducts = () => [{
   category: "เดรส",
   price: 690,
   image: null,
+  status: "active",
   size: "S",
   chest: "32-34",
   stock: {
@@ -185,6 +195,7 @@ const seedProducts = () => [{
   category: "แจ็คเก็ต",
   price: 1290,
   image: null,
+  status: "active",
   size: "Free Size",
   chest: "40-44",
   stock: {
@@ -199,6 +210,7 @@ const seedProducts = () => [{
   category: "กระโปรง",
   price: 490,
   image: null,
+  status: "active",
   size: "M",
   chest: null,
   stock: {
@@ -213,6 +225,7 @@ const seedProducts = () => [{
   category: "ฮู้ด/สเวตเตอร์",
   price: 750,
   image: null,
+  status: "active",
   size: "L",
   chest: "42",
   stock: {
@@ -227,6 +240,7 @@ const seedProducts = () => [{
   category: "เสื้อยืด",
   price: 350,
   image: null,
+  status: "active",
   size: "S",
   chest: "34-36",
   stock: {
@@ -241,6 +255,7 @@ const seedProducts = () => [{
   category: "กางเกงยีนส์",
   price: 950,
   image: null,
+  status: "active",
   size: "32",
   chest: null,
   stock: {
@@ -255,6 +270,7 @@ const seedProducts = () => [{
   category: "เดรส",
   price: 790,
   image: null,
+  status: "active",
   size: "M",
   chest: "34-36",
   stock: {
@@ -265,6 +281,69 @@ const seedProducts = () => [{
 }];
 const money = n => n.toLocaleString("th-TH");
 const combinedQty = p => Object.values(p.stock).reduce((s, v) => s + (v || 0), 0);
+
+// ส่งออกรายการสต็อกปัจจุบัน (ตามที่กรอง/ค้นหาอยู่) เป็นไฟล์ .xlsx
+// แถวละ 1 สินค้า มีคอลัมน์คงเหลือแยกตามสาขา + รวม + สถานะ
+function exportStockToExcel(products, branches, settings) {
+  if (!window.XLSX) {
+    alert("ไม่สามารถโหลดตัวสร้างไฟล์ Excel ได้ กรุณาลองใหม่อีกครั้ง");
+    return;
+  }
+  const rows = products.map(p => {
+    const total = combinedQty(p);
+    const status = total <= 0 ? "หมดสต็อก" : total < settings.minTotal ? "ใกล้หมด" : "ปกติ";
+    const row = {
+      "SKU": p.sku,
+      "ชื่อสินค้า": p.name,
+      "หมวดหมู่": p.category,
+      "ไซส์": p.size || "",
+      "รอบอก (นิ้ว)": p.chest || "",
+      "ราคา (บาท)": p.price
+    };
+    branches.forEach(b => {
+      row[b.name] = p.stock[b.id] || 0;
+    });
+    row["รวมทุกสาขา"] = total;
+    row["มูลค่ารวม (บาท)"] = total * p.price;
+    row["สถานะสต็อก"] = status;
+    row["สถานะการขาย"] = productStatusLabel(p.status);
+    return row;
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const headers = rows.length ? Object.keys(rows[0]) : [];
+  ws["!cols"] = headers.map(h => ({
+    wch: Math.max(h.length + 2, 12)
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "สต็อกสินค้า");
+
+  // ชีตที่ 2: สินค้าใกล้หมด แยกตามสาขา (เกณฑ์ต่อสาขา settings.minUnit)
+  // เรียงตามสาขา แล้วเรียงจากคงเหลือน้อยไปมากภายในแต่ละสาขา ให้เห็นรายการเร่งด่วนก่อน
+  const lowRows = [];
+  branches.forEach(b => {
+    products.filter(p => (p.status || "active") === "active" && (p.stock[b.id] || 0) < settings.minUnit).sort((x, y) => (x.stock[b.id] || 0) - (y.stock[b.id] || 0)).forEach(p => {
+      const qty = p.stock[b.id] || 0;
+      lowRows.push({
+        "สาขา": b.name,
+        "SKU": p.sku,
+        "ชื่อสินค้า": p.name,
+        "หมวดหมู่": p.category,
+        "คงเหลือที่สาขา": qty,
+        "เกณฑ์ต่ำ (ต่อสาขา)": settings.minUnit,
+        "สถานะ": qty <= 0 ? "หมดสต็อก" : "ใกล้หมด",
+        "ราคา (บาท)": p.price
+      });
+    });
+  });
+  const wsLow = XLSX.utils.json_to_sheet(lowRows);
+  const lowHeaders = lowRows.length ? Object.keys(lowRows[0]) : ["สาขา", "SKU", "ชื่อสินค้า", "หมวดหมู่", "คงเหลือที่สาขา", "เกณฑ์ต่ำ (ต่อสาขา)", "สถานะ", "ราคา (บาท)"];
+  wsLow["!cols"] = lowHeaders.map(h => ({
+    wch: Math.max(h.length + 2, 12)
+  }));
+  XLSX.utils.book_append_sheet(wb, wsLow, "สินค้าใกล้หมด");
+  const stamp = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `สต็อกสินค้า-${stamp}.xlsx`);
+}
 const DEFAULT_MIN_UNIT = 5;
 const DEFAULT_MIN_TOTAL = 10;
 const isToday = iso => {
@@ -372,17 +451,17 @@ function StatusChip({
   const state = qty <= 0 ? "out" : qty < unit ? "low" : "ok";
   const map = {
     ok: {
-      bg: "#EEF1E9",
+      bg: "#DCFCE7",
       fg: C.moss,
       label: "ปกติ"
     },
     low: {
-      bg: "#F3E8D9",
+      bg: "#FEF3C7",
       fg: C.brassDark,
       label: "ใกล้หมด"
     },
     out: {
-      bg: "#F3E0E0",
+      bg: "#FEE2E2",
       fg: C.wine,
       label: "หมดสต็อก"
     }
@@ -395,6 +474,49 @@ function StatusChip({
     }
   }, map.label);
 }
+// ให้สีตามความรุนแรงของสต็อกต่ำ (แดง = หมด/วิกฤต, ส้ม = ต่ำมาก, เหลือง = ใกล้หมด) ใช้ทำแรงค์สีในแดชบอร์ด
+function severityTone(qty, unit) {
+  if (qty <= 0) return {
+    bg: "#FEE2E2",
+    fg: C.wine
+  };
+  if (qty <= unit / 2) return {
+    bg: "#FFEDD5",
+    fg: "#C2410C"
+  };
+  return {
+    bg: "#FEF3C7",
+    fg: C.brassDark
+  };
+}
+
+// เลขอันดับความเร่งด่วน (1 = ต้องเติมก่อน) พร้อมสีบ่งชี้ความรุนแรงตามเกณฑ์สต็อกต่ำ
+function RankBadge({
+  rank,
+  qty,
+  unit
+}) {
+  const tone = severityTone(qty, unit);
+  return /*#__PURE__*/React.createElement("span", {
+    className: "tag-font-mono text-[11px] font-bold w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0",
+    style: {
+      background: tone.bg,
+      color: tone.fg
+    }
+  }, rank);
+}
+function ProductStatusBadge({
+  status
+}) {
+  const isActive = (status || "active") === "active";
+  return /*#__PURE__*/React.createElement("span", {
+    className: "tag-font-body text-[11px] px-2 py-0.5 rounded-full font-semibold whitespace-nowrap",
+    style: {
+      background: isActive ? "#DCFCE7" : "#E2E8F0",
+      color: isActive ? C.moss : "#475569"
+    }
+  }, isActive ? "ขายอยู่" : "เลิกขาย");
+}
 function MoveChip({
   type,
   qty
@@ -403,7 +525,7 @@ function MoveChip({
   return /*#__PURE__*/React.createElement("span", {
     className: "tag-font-mono text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap",
     style: {
-      background: isIn ? "#EEF1E9" : "#F3E0E0",
+      background: isIn ? "#DCFCE7" : "#FEE2E2",
       color: isIn ? C.moss : C.wine
     }
   }, isIn ? "▲ รับเข้า" : "▼ ตัดออก", " ", qty);
@@ -456,7 +578,7 @@ function BalanceCell({
     title: "รับเข้า",
     className: `${btn} rounded flex items-center justify-center font-bold active:scale-95 transition`,
     style: {
-      background: "#EEF1E9",
+      background: "#DCFCE7",
       color: C.moss
     }
   }, "▲"), /*#__PURE__*/React.createElement("button", {
@@ -464,7 +586,7 @@ function BalanceCell({
     title: "ตัดออก",
     className: `${btn} rounded flex items-center justify-center font-bold active:scale-95 transition`,
     style: {
-      background: "#F3E0E0",
+      background: "#FEE2E2",
       color: C.wine
     }
   }, "▼"), onTransfer && /*#__PURE__*/React.createElement("button", {
@@ -473,7 +595,7 @@ function BalanceCell({
     disabled: qty <= 0,
     className: `${btn} rounded flex items-center justify-center font-bold active:scale-95 transition disabled:opacity-30`,
     style: {
-      background: "#E7EEF3",
+      background: "#DBEAFE",
       color: C.denim
     }
   }, "⇄"));
@@ -496,6 +618,8 @@ function StockApp() {
   const [moveCtx, setMoveCtx] = useState(null);
   const [transferCtx, setTransferCtx] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [editTx, setEditTx] = useState(null);
+  const [deleteTxTarget, setDeleteTxTarget] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const saveTimer = useRef(null);
 
@@ -507,7 +631,10 @@ function StockApp() {
       if (snap.exists()) {
         const parsed = snap.data();
         isRemoteUpdate.current = true;
-        setProducts(parsed.products || seedProducts());
+        setProducts((parsed.products || seedProducts()).map(p => ({
+          ...p,
+          status: p.status || "active"
+        })));
         setTransactions(parsed.transactions || []);
         setBranches(parsed.branches && parsed.branches.length ? parsed.branches : DEFAULT_BRANCHES);
         setCategories(parsed.categories && parsed.categories.length ? parsed.categories : DEFAULT_CATS);
@@ -655,6 +782,60 @@ function StockApp() {
       ok: true
     };
   };
+  // แก้ไขรายการประวัติการเคลื่อนไหว — ปรับสต็อกของสินค้าให้สอดคล้องกับค่าที่แก้ไขใหม่โดยอัตโนมัติ
+  const updateTransaction = (tx, patch) => {
+    const newType = patch.type ?? tx.type;
+    const newQty = Number(patch.qty ?? tx.qty);
+    if (!newQty || newQty <= 0) return {
+      ok: false,
+      error: "กรุณาระบุจำนวนมากกว่า 0"
+    };
+    const product = products.find(p => p.id === tx.productId);
+    if (product) {
+      const oldEffect = tx.type === "in" ? tx.qty : -tx.qty;
+      const current = product.stock[tx.branchId] || 0;
+      const baseline = current - oldEffect;
+      const newEffect = newType === "in" ? newQty : -newQty;
+      const nextStock = baseline + newEffect;
+      if (nextStock < 0) return {
+        ok: false,
+        error: `การแก้ไขนี้จะทำให้คงเหลือติดลบ (จะเหลือ ${nextStock} ชิ้น) กรุณาตรวจสอบจำนวนอีกครั้ง`
+      };
+      setProducts(prev => prev.map(p => p.id === product.id ? {
+        ...p,
+        stock: {
+          ...p.stock,
+          [tx.branchId]: nextStock
+        }
+      } : p));
+    }
+    setTransactions(prev => prev.map(t => t.id === tx.id ? {
+      ...t,
+      ...patch,
+      type: newType,
+      qty: newQty
+    } : t));
+    return {
+      ok: true
+    };
+  };
+
+  // ลบรายการประวัติการเคลื่อนไหว — ย้อนผลของรายการนั้นออกจากสต็อกสินค้าโดยอัตโนมัติ
+  const deleteTransaction = tx => {
+    const product = products.find(p => p.id === tx.productId);
+    if (product) {
+      const oldEffect = tx.type === "in" ? tx.qty : -tx.qty;
+      const current = product.stock[tx.branchId] || 0;
+      setProducts(prev => prev.map(p => p.id === product.id ? {
+        ...p,
+        stock: {
+          ...p.stock,
+          [tx.branchId]: current - oldEffect
+        }
+      } : p));
+    }
+    setTransactions(prev => prev.filter(t => t.id !== tx.id));
+  };
   const filtered = useMemo(() => {
     if (!products) return [];
     const q = search.trim().toLowerCase();
@@ -664,7 +845,7 @@ function StockApp() {
     if (!products) return null;
     const totalUnits = products.reduce((s, p) => s + combinedQty(p), 0);
     const totalValue = products.reduce((s, p) => s + combinedQty(p) * p.price, 0);
-    const lowStock = products.filter(p => combinedQty(p) < settings.minTotal);
+    const lowStock = products.filter(p => (p.status || "active") === "active" && combinedQty(p) < settings.minTotal);
     const perBranch = branches.map(b => ({
       ...b,
       units: products.reduce((s, p) => s + (p.stock[b.id] || 0), 0),
@@ -778,7 +959,9 @@ function StockApp() {
       setView("stock");
       setBranch(id);
     },
-    settings: settings
+    settings: settings,
+    products: products,
+    branches: branches
   }), view === "stock" && /*#__PURE__*/React.createElement(StockView, {
     branches: branches,
     branch: branch,
@@ -807,7 +990,9 @@ function StockApp() {
   }), view === "history" && /*#__PURE__*/React.createElement(HistoryView, {
     transactions: transactions,
     branches: branches,
-    branchName: branchName
+    branchName: branchName,
+    onEdit: tx => setEditTx(tx),
+    onDeleteRequest: tx => setDeleteTxTarget(tx)
   }), view === "settings" && /*#__PURE__*/React.createElement(SettingsView, {
     settings: settings,
     onSave: setSettings
@@ -861,6 +1046,23 @@ function StockApp() {
       removeProduct(deleteTarget.id);
       setDeleteTarget(null);
     }
+  }), editTx && /*#__PURE__*/React.createElement(EditTransactionModal, {
+    tx: editTx,
+    branchName: branchName,
+    onClose: () => setEditTx(null),
+    onSave: patch => {
+      const res = updateTransaction(editTx, patch);
+      if (res.ok) setEditTx(null);
+      return res;
+    }
+  }), deleteTxTarget && /*#__PURE__*/React.createElement(ConfirmDeleteTransactionModal, {
+    tx: deleteTxTarget,
+    branchName: branchName,
+    onClose: () => setDeleteTxTarget(null),
+    onConfirm: () => {
+      deleteTransaction(deleteTxTarget);
+      setDeleteTxTarget(null);
+    }
   }), view === "stock" && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowAdd(true),
     className: "sm:hidden fixed right-4 z-30 w-14 h-14 rounded-full flex items-center justify-center text-2xl shadow-lg",
@@ -877,9 +1079,16 @@ function Dashboard({
   transactions,
   branchName,
   onGoToStock,
-  settings
+  settings,
+  products,
+  branches
 }) {
   const recent = transactions.slice(0, 6);
+  // สินค้าใกล้หมด/หมด แยกเป็นรายสาขา (ใช้เกณฑ์ต่อสาขา ไม่ใช่รวมทุกสาขา)
+  const lowByBranch = useMemo(() => branches.map(b => ({
+    ...b,
+    items: products.filter(p => (p.status || "active") === "active" && (p.stock[b.id] || 0) < settings.minUnit).sort((x, y) => (x.stock[b.id] || 0) - (y.stock[b.id] || 0))
+  })).filter(b => b.items.length > 0), [branches, products, settings.minUnit]);
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-6 sm:space-y-8"
   }, /*#__PURE__*/React.createElement("div", {
@@ -1043,7 +1252,7 @@ function Dashboard({
   }, /*#__PURE__*/React.createElement(MoveChip, {
     type: t.type,
     qty: t.qty
-  }))))))));
+  }))))))), (lowByBranch.length > 0 && React.createElement(HangTag, { className: "p-5 pt-6 sm:p-6 sm:pt-7" }, React.createElement("div", { className: "flex items-center justify-between mb-4 tag-perf pt-4 -mt-4" }, React.createElement("h2", { className: "tag-font-display text-base sm:text-lg font-semibold" }, "สินค้าใกล้หมด แยกตามสาขา"), React.createElement("span", { className: "tag-font-mono text-[11px] sm:text-xs", style: { color: C.wine } }, "ต่อสาขา < ", settings.minUnit)), React.createElement("div", { className: "space-y-0" }, lowByBranch.map((b, bi) => React.createElement("div", { key: b.id, className: bi > 0 ? "pt-5 mt-5 border-t-2" : "", style: bi > 0 ? { borderColor: C.paperDark } : undefined }, React.createElement("button", { onClick: () => onGoToStock(b.id), className: "w-full flex items-center justify-between mb-2" }, React.createElement("span", { className: "tag-font-body text-sm font-semibold" }, b.name), React.createElement("span", { className: "tag-font-mono text-xs px-2 py-0.5 rounded-full font-semibold", style: { background: "#FEE2E2", color: C.wine } }, b.items.length, " รายการ")), React.createElement("ul", { className: "divide-y", style: { borderColor: C.line } }, b.items.slice(0, 5).map((p, idx) => React.createElement("li", { key: p.id, className: "py-2 flex items-center justify-between gap-3" }, React.createElement("div", { className: "flex items-center gap-2 min-w-0" }, React.createElement(RankBadge, { rank: idx + 1, qty: p.stock[b.id] || 0, unit: settings.minUnit }), React.createElement(ProductThumb, { product: p, size: 28 }), React.createElement("div", { className: "min-w-0" }, React.createElement("p", { className: "text-sm font-medium truncate" }, p.name), React.createElement("p", { className: "tag-font-mono text-xs truncate", style: { color: C.brassDark } }, p.sku))), React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, React.createElement("span", { className: "tag-font-mono text-sm" }, p.stock[b.id] || 0, " ชิ้น"), React.createElement(StatusChip, { qty: p.stock[b.id] || 0, unit: settings.minUnit }))))), (b.items.length > 5 && React.createElement("p", { className: "tag-font-mono text-xs mt-2 font-semibold", style: { color: C.denim } }, "+", b.items.length - 5, " รายการอื่น ๆ — ดูทั้งหมดที่หน้าสต็อกสินค้า"))))))));
 }
 function StockView({
   branches,
@@ -1051,7 +1260,7 @@ function StockView({
   setBranch,
   search,
   setSearch,
-  products,
+  products: productsIn,
   onDeleteRequest,
   showAdd,
   setShowAdd,
@@ -1065,6 +1274,8 @@ function StockView({
   settings
 }) {
   const branchName = id => branches.find(b => b.id === id)?.name || id;
+  const [statusFilter, setStatusFilter] = useState("all");
+  const products = (statusFilter === "all" ? productsIn : productsIn.filter(p => (p.status || "active") === statusFilter)).slice().sort((a, b) => a.name.localeCompare(b.name, "th"));
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-5 sm:space-y-6"
   }, /*#__PURE__*/React.createElement("div", {
@@ -1122,14 +1333,39 @@ function StockView({
       borderColor: C.line,
       background: "#FFFFFF"
     }
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("select", {
+    value: statusFilter,
+    onChange: e => setStatusFilter(e.target.value),
+    className: "px-3 py-2.5 sm:py-2 rounded-md border tag-font-body text-sm flex-shrink-0",
+    style: {
+      borderColor: C.line,
+      background: "#FFFFFF"
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "ทุกสถานะ"), PRODUCT_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s.value,
+    value: s.value
+  }, s.label))), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2 flex-shrink-0"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => exportStockToExcel(products, branches, settings),
+    disabled: products.length === 0,
+    className: "flex-1 sm:flex-initial tag-font-body text-sm px-4 py-2.5 sm:py-2 rounded-md font-semibold border-2 disabled:opacity-40",
+    style: {
+      borderColor: C.moss,
+      color: C.moss,
+      background: "#FFFFFF"
+    },
+    title: "ส่งออกรายการสต็อกที่แสดงอยู่เป็นไฟล์ Excel"
+  }, "⬇ Export Excel"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowAdd(true),
-    className: "hidden sm:block tag-font-body text-sm px-4 py-2 rounded-md font-medium",
+    className: "hidden sm:block tag-font-body text-sm px-4 py-2 rounded-md font-semibold",
     style: {
       background: C.brass,
-      color: C.ink
+      color: "#FFFFFF"
     }
-  }, "+ เพิ่มสินค้าใหม่")), products.length === 0 && /*#__PURE__*/React.createElement(HangTag, {
+  }, "+ เพิ่มสินค้าใหม่"))), products.length === 0 && /*#__PURE__*/React.createElement(HangTag, {
     className: "p-10 text-center"
   }, /*#__PURE__*/React.createElement("p", {
     className: "text-sm",
@@ -1151,8 +1387,10 @@ function StockView({
     }
   }, /*#__PURE__*/React.createElement("span", null, "สินค้า / SKU"), /*#__PURE__*/React.createElement("span", null, "ราคา"), branch === "all" ? /*#__PURE__*/React.createElement(React.Fragment, null, branches.map(b => /*#__PURE__*/React.createElement("span", {
     key: b.id,
-    className: "truncate"
-  }, b.name.replace("สาขา", ""))), /*#__PURE__*/React.createElement("span", null, "สถานะ")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "คงเหลือ (", branchName(branch), ")"), /*#__PURE__*/React.createElement("span", null, "สถานะ")), /*#__PURE__*/React.createElement("span", null)), /*#__PURE__*/React.createElement("div", {
+    className: "truncate text-center"
+  }, b.name.replace("สาขา", ""))), /*#__PURE__*/React.createElement("span", null, "สถานะ")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "text-center"
+  }, "คงเหลือ (", branchName(branch), ")"), /*#__PURE__*/React.createElement("span", null, "สถานะ")), /*#__PURE__*/React.createElement("span", null)), /*#__PURE__*/React.createElement("div", {
     className: "divide-y",
     style: {
       borderColor: C.line
@@ -1172,9 +1410,13 @@ function StockView({
       product: p
     }), /*#__PURE__*/React.createElement("div", {
       className: "min-w-0"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center gap-2"
     }, /*#__PURE__*/React.createElement("p", {
       className: "text-sm font-medium truncate"
-    }, p.name), /*#__PURE__*/React.createElement("p", {
+    }, p.name), /*#__PURE__*/React.createElement(ProductStatusBadge, {
+      status: p.status
+    })), /*#__PURE__*/React.createElement("p", {
       className: "tag-font-mono text-xs truncate",
       style: {
         color: C.brassDark
@@ -1187,7 +1429,8 @@ function StockView({
     }, sizeSpec(p)))), /*#__PURE__*/React.createElement("div", {
       className: "tag-font-mono text-sm"
     }, "฿", money(p.price)), branch === "all" ? /*#__PURE__*/React.createElement(React.Fragment, null, branches.map(b => /*#__PURE__*/React.createElement("div", {
-      key: b.id
+      key: b.id,
+      className: "flex justify-center"
     }, /*#__PURE__*/React.createElement(BalanceCell, {
       qty: p.stock[b.id] || 0,
       onMove: type => onOpenMove(p, b.id, type),
@@ -1201,7 +1444,9 @@ function StockView({
       style: {
         color: C.brassDark
       }
-    }, total, " ชิ้นรวม"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(BalanceCell, {
+    }, total, " ชิ้นรวม"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "flex justify-center"
+    }, /*#__PURE__*/React.createElement(BalanceCell, {
       qty: branchQty,
       onMove: type => onOpenMove(p, branch, type),
       onTransfer: branches.length > 1 ? () => onOpenTransfer(p, branch) : null,
@@ -1239,9 +1484,13 @@ function StockView({
       size: 52
     }), /*#__PURE__*/React.createElement("div", {
       className: "min-w-0 flex-1"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center gap-2 flex-wrap"
     }, /*#__PURE__*/React.createElement("p", {
       className: "text-sm font-medium leading-snug"
-    }, p.name), /*#__PURE__*/React.createElement("p", {
+    }, p.name), /*#__PURE__*/React.createElement(ProductStatusBadge, {
+      status: p.status
+    })), /*#__PURE__*/React.createElement("p", {
       className: "tag-font-mono text-xs mt-0.5",
       style: {
         color: C.brassDark
@@ -1302,19 +1551,40 @@ function StockView({
 function HistoryView({
   transactions,
   branches,
-  branchName
+  branchName,
+  onEdit,
+  onDeleteRequest
 }) {
   const [branchFilter, setBranchFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [q, setQ] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const setPresetRange = days => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - (days - 1));
+    const iso = d => d.toISOString().slice(0, 10);
+    setFromDate(iso(from));
+    setToDate(iso(to));
+  };
+  const clearRange = () => {
+    setFromDate("");
+    setToDate("");
+  };
   const rows = useMemo(() => {
+    const from = fromDate ? new Date(fromDate + "T00:00:00") : null;
+    const to = toDate ? new Date(toDate + "T23:59:59.999") : null;
     return transactions.filter(t => {
       if (branchFilter !== "all" && t.branchId !== branchFilter) return false;
       if (typeFilter !== "all" && t.type !== typeFilter) return false;
       if (q.trim() && !(t.productName.toLowerCase().includes(q.toLowerCase()) || t.sku.toLowerCase().includes(q.toLowerCase()))) return false;
+      const at = new Date(t.at);
+      if (from && at < from) return false;
+      if (to && at > to) return false;
       return true;
     });
-  }, [transactions, branchFilter, typeFilter, q]);
+  }, [transactions, branchFilter, typeFilter, q, fromDate, toDate]);
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-4 sm:space-y-5"
   }, /*#__PURE__*/React.createElement("div", {
@@ -1357,7 +1627,71 @@ function HistoryView({
     value: "in"
   }, "รับเข้าเท่านั้น"), /*#__PURE__*/React.createElement("option", {
     value: "out"
-  }, "ตัดออกเท่านั้น")))), rows.length === 0 ? /*#__PURE__*/React.createElement(HangTag, {
+  }, "ตัดออกเท่านั้น")))), /*#__PURE__*/React.createElement(HangTag, {
+    className: "p-4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap items-end gap-3"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1 tag-font-body text-xs",
+    style: {
+      color: C.brassDark
+    }
+  }, "จากวันที่"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: fromDate,
+    max: toDate || undefined,
+    onChange: e => setFromDate(e.target.value),
+    className: "px-3 py-2 rounded-md border tag-font-mono text-sm",
+    style: {
+      borderColor: C.line,
+      background: "#FFFFFF"
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1 tag-font-body text-xs",
+    style: {
+      color: C.brassDark
+    }
+  }, "ถึงวันที่"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: toDate,
+    min: fromDate || undefined,
+    onChange: e => setToDate(e.target.value),
+    className: "px-3 py-2 rounded-md border tag-font-mono text-sm",
+    style: {
+      borderColor: C.line,
+      background: "#FFFFFF"
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2 flex-wrap"
+  }, [{
+    label: "วันนี้",
+    days: 1
+  }, {
+    label: "7 วันล่าสุด",
+    days: 7
+  }, {
+    label: "30 วันล่าสุด",
+    days: 30
+  }].map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.days,
+    type: "button",
+    onClick: () => setPresetRange(p.days),
+    className: "tag-font-body text-xs px-3 py-2 rounded-md border",
+    style: {
+      borderColor: C.denim,
+      color: C.denim,
+      background: "#FFFFFF"
+    }
+  }, p.label)), (fromDate || toDate) && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: clearRange,
+    className: "tag-font-body text-xs px-3 py-2 rounded-md border",
+    style: {
+      borderColor: C.line,
+      color: C.brassDark,
+      background: "#FFFFFF"
+    }
+  }, "ล้างช่วงวันที่")))), rows.length === 0 ? /*#__PURE__*/React.createElement(HangTag, {
     className: "p-10 text-center"
   }, /*#__PURE__*/React.createElement("p", {
     className: "text-sm",
@@ -1369,11 +1703,13 @@ function HistoryView({
   }, /*#__PURE__*/React.createElement("div", {
     className: "grid tag-font-mono text-xs uppercase tracking-wide px-5 py-3",
     style: {
-      gridTemplateColumns: "1.6fr 1.3fr 1fr 1fr 1.6fr",
+      gridTemplateColumns: "1.4fr 1.1fr 1fr 1fr 1.4fr 0.9fr",
       background: C.paperDark,
       color: C.brassDark
     }
-  }, /*#__PURE__*/React.createElement("span", null, "สินค้า"), /*#__PURE__*/React.createElement("span", null, "สาขา"), /*#__PURE__*/React.createElement("span", null, "ประเภท"), /*#__PURE__*/React.createElement("span", null, "จำนวน"), /*#__PURE__*/React.createElement("span", null, "วันที่ / หมายเหตุ")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "สินค้า"), /*#__PURE__*/React.createElement("span", null, "สาขา"), /*#__PURE__*/React.createElement("span", null, "ประเภท"), /*#__PURE__*/React.createElement("span", null, "จำนวน"), /*#__PURE__*/React.createElement("span", null, "วันที่ / หมายเหตุ"), /*#__PURE__*/React.createElement("span", {
+    className: "text-right"
+  }, "จัดการ")), /*#__PURE__*/React.createElement("div", {
     className: "divide-y",
     style: {
       borderColor: C.line
@@ -1382,7 +1718,7 @@ function HistoryView({
     key: t.id,
     className: "grid px-5 py-3 items-center",
     style: {
-      gridTemplateColumns: "1.6fr 1.3fr 1fr 1fr 1.6fr"
+      gridTemplateColumns: "1.4fr 1.1fr 1fr 1fr 1.4fr 0.9fr"
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "min-w-0"
@@ -1405,7 +1741,25 @@ function HistoryView({
     style: {
       color: C.brassDark
     }
-  }, fmtDate(t.at), t.note ? ` · ${t.note}` : ""))))), /*#__PURE__*/React.createElement("div", {
+  }, fmtDate(t.at), t.note ? ` · ${t.note}` : ""), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-end gap-2"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => onEdit(t),
+    title: "แก้ไขรายการ",
+    className: "w-8 h-8 rounded-md border flex items-center justify-center text-sm",
+    style: {
+      borderColor: C.line,
+      color: C.denim
+    }
+  }, "\u270E"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => onDeleteRequest(t),
+    title: "ลบรายการ",
+    className: "w-8 h-8 rounded-md border flex items-center justify-center text-sm",
+    style: {
+      borderColor: C.line,
+      color: C.wine
+    }
+  }, "\u2715")))))), /*#__PURE__*/React.createElement("div", {
     className: "md:hidden space-y-3"
   }, rows.map(t => /*#__PURE__*/React.createElement(HangTag, {
     key: t.id,
@@ -1434,7 +1788,23 @@ function HistoryView({
     style: {
       color: C.brassDark
     }
-  }, "หมายเหตุ: ", t.note))))));
+  }, "หมายเหตุ: ", t.note), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 mt-3 tag-perf pt-3"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => onEdit(t),
+    className: "flex-1 py-2 rounded-md text-xs border tag-font-body",
+    style: {
+      borderColor: C.line,
+      color: C.denim
+    }
+  }, "\u270E แก้ไข"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => onDeleteRequest(t),
+    className: "flex-1 py-2 rounded-md text-xs border tag-font-body",
+    style: {
+      borderColor: C.line,
+      color: C.wine
+    }
+  }, "\u2715 ลบ")))))));
 }
 function MoveModal({
   ctx,
@@ -1692,6 +2062,7 @@ function ProductModal({
 }) {
   const isEdit = mode === "edit";
   const [name, setName] = useState(product?.name || "");
+  const [status, setStatus] = useState(product?.status || "active");
   const [sku, setSku] = useState(product?.sku || "");
   const [category, setCategory] = useState(product?.category || categories[0]?.name || "");
   const [addingCat, setAddingCat] = useState(false);
@@ -1764,6 +2135,7 @@ function ProductModal({
       category,
       price: parseFloat(price) || 0,
       image,
+      status,
       size: size.trim() || null,
       chest: chest.trim() ? chest.trim() : null
     };
@@ -1852,6 +2224,23 @@ function ProductModal({
       borderColor: C.line
     }
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "สถานะสินค้า"), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 gap-2"
+  }, PRODUCT_STATUSES.map(s => /*#__PURE__*/React.createElement("button", {
+    key: s.value,
+    type: "button",
+    onClick: () => setStatus(s.value),
+    className: "py-2.5 sm:py-2 rounded-md text-sm font-semibold border-2 transition",
+    style: {
+      background: status === s.value ? (s.value === "active" ? C.moss : C.wine) : "#FFFFFF",
+      color: status === s.value ? "#FFFFFF" : s.value === "active" ? C.moss : C.wine,
+      borderColor: s.value === "active" ? C.moss : C.wine
+    }
+  }, s.label)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     className: "block mb-1",
     style: {
       color: C.brassDark
@@ -2214,7 +2603,7 @@ function ConfirmDeleteModal({
   }, /*#__PURE__*/React.createElement("div", {
     className: "w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0",
     style: {
-      background: "#F3E0E0",
+      background: "#FEE2E2",
       color: C.wine
     }
   }, "!"), /*#__PURE__*/React.createElement("h3", {
@@ -2245,6 +2634,218 @@ function ConfirmDeleteModal({
       color: "#FFFFFF"
     }
   }, "ลบสินค้า"))));
+}
+// แก้ไขรายการประวัติการเคลื่อนไหว (ประเภท / จำนวน / หมายเหตุ / วันที่) — สต็อกของสินค้าจะถูกปรับให้ตรงกันโดยอัตโนมัติ
+function EditTransactionModal({
+  tx,
+  branchName,
+  onClose,
+  onSave
+}) {
+  const [type, setType] = useState(tx.type);
+  const [qty, setQty] = useState(String(tx.qty));
+  const [note, setNote] = useState(tx.note || "");
+  const [atLocal, setAtLocal] = useState(() => {
+    const d = new Date(tx.at);
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [error, setError] = useState("");
+  const isIn = type === "in";
+  const submit = () => {
+    const n = parseInt(qty || "0", 10);
+    const newAt = atLocal ? new Date(atLocal).toISOString() : tx.at;
+    const res = onSave({
+      type,
+      qty: n,
+      note,
+      at: newAt
+    });
+    if (res && res.ok === false) {
+      setError(res.error);
+    }
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4",
+    style: {
+      background: "rgba(35,38,43,0.55)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-full sm:max-w-sm rounded-t-2xl sm:rounded-lg p-6 relative max-h-[90vh] overflow-y-auto",
+    style: {
+      background: C.paper
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "hidden sm:block absolute -top-2 left-6 tag-hole",
+    style: {
+      background: C.paper
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-mono text-xs uppercase tracking-wide",
+    style: {
+      color: C.denim
+    }
+  }, "แก้ไขรายการ · ", branchName(tx.branchId)), /*#__PURE__*/React.createElement("h3", {
+    className: "tag-font-display text-lg font-semibold mt-1 mb-1"
+  }, tx.productName), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-mono text-xs mb-4",
+    style: {
+      color: C.brassDark
+    }
+  }, tx.sku), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-3 tag-font-body text-sm"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "ประเภท"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setType("in"),
+    className: "flex-1 py-2 rounded-md text-sm border font-medium",
+    style: {
+      borderColor: isIn ? C.moss : C.line,
+      background: isIn ? C.moss : "transparent",
+      color: isIn ? "#FFFFFF" : C.ink
+    }
+  }, "รับเข้า"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setType("out"),
+    className: "flex-1 py-2 rounded-md text-sm border font-medium",
+    style: {
+      borderColor: !isIn ? C.wine : C.line,
+      background: !isIn ? C.wine : "transparent",
+      color: !isIn ? "#FFFFFF" : C.ink
+    }
+  }, "ตัดออก"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "จำนวน"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "1",
+    inputMode: "numeric",
+    value: qty,
+    onChange: e => {
+      setQty(e.target.value);
+      setError("");
+    },
+    className: "w-full px-3 py-2.5 rounded border tag-font-mono text-base",
+    style: {
+      borderColor: C.line
+    },
+    autoFocus: true
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "วันที่ / เวลา"), /*#__PURE__*/React.createElement("input", {
+    type: "datetime-local",
+    value: atLocal,
+    onChange: e => setAtLocal(e.target.value),
+    className: "w-full px-3 py-2.5 rounded border tag-font-mono text-sm",
+    style: {
+      borderColor: C.line
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1",
+    style: {
+      color: C.brassDark
+    }
+  }, "หมายเหตุ (ถ้ามี)"), /*#__PURE__*/React.createElement("input", {
+    value: note,
+    onChange: e => setNote(e.target.value),
+    className: "w-full px-3 py-2.5 rounded border",
+    style: {
+      borderColor: C.line
+    }
+  })), error && /*#__PURE__*/React.createElement("p", {
+    className: "text-xs",
+    style: {
+      color: C.wine
+    }
+  }, error)), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-3 mt-6"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    className: "flex-1 py-3 sm:py-2 rounded-md text-sm border"
+  }, "ยกเลิก"), /*#__PURE__*/React.createElement("button", {
+    onClick: submit,
+    className: "flex-1 py-3 sm:py-2 rounded-md text-sm font-medium",
+    style: {
+      background: C.brass,
+      color: C.ink
+    }
+  }, "บันทึกการแก้ไข"))));
+}
+
+// ป็อปอัพยืนยันก่อนลบรายการประวัติการเคลื่อนไหว — เพื่อกันการลบผิดโดยไม่ตั้งใจ
+function ConfirmDeleteTransactionModal({
+  tx,
+  branchName,
+  onClose,
+  onConfirm
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4",
+    style: {
+      background: "rgba(35,38,43,0.55)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-full sm:max-w-sm rounded-t-2xl sm:rounded-lg p-6 relative",
+    style: {
+      background: C.paper
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "hidden sm:block absolute -top-2 left-6 tag-hole",
+    style: {
+      background: C.paper
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-3 mb-3"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0",
+    style: {
+      background: "#FEE2E2",
+      color: C.wine
+    }
+  }, "!"), /*#__PURE__*/React.createElement("h3", {
+    className: "tag-font-display text-lg font-semibold"
+  }, "ยืนยันการลบรายการ")), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-body text-sm",
+    style: {
+      color: C.brassDark
+    }
+  }, "ต้องการลบรายการ ", /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold",
+    style: {
+      color: C.ink
+    }
+  }, tx.type === "in" ? "รับเข้า" : "ตัดออก", " ", tx.qty, " ชิ้น"), " ของ ", /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold",
+    style: {
+      color: C.ink
+    }
+  }, tx.productName), " (", tx.sku, ") ที่", branchName(tx.branchId), " ใช่หรือไม่? สต็อกของสินค้าจะถูกปรับกลับให้อัตโนมัติ และการลบนี้ไม่สามารถย้อนกลับได้"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-3 mt-6"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    className: "flex-1 py-3 sm:py-2 rounded-md text-sm border tag-font-body",
+    style: {
+      borderColor: C.line
+    }
+  }, "ยกเลิก"), /*#__PURE__*/React.createElement("button", {
+    onClick: onConfirm,
+    className: "flex-1 py-3 sm:py-2 rounded-md text-sm font-medium tag-font-body",
+    style: {
+      background: C.wine,
+      color: "#FFFFFF"
+    }
+  }, "ลบรายการ"))));
 }
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(/*#__PURE__*/React.createElement(StockApp, null));
