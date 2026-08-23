@@ -284,7 +284,7 @@ const combinedQty = p => Object.values(p.stock).reduce((s, v) => s + (v || 0), 0
 
 // ส่งออกรายการสต็อกปัจจุบัน (ตามที่กรอง/ค้นหาอยู่) เป็นไฟล์ .xlsx
 // แถวละ 1 สินค้า มีคอลัมน์คงเหลือแยกตามสาขา + รวม + สถานะ
-function exportStockToExcel(products, branches, settings) {
+async function exportStockToExcel(products, branches, settings) {
   if (!window.XLSX) {
     alert("ไม่สามารถโหลดตัวสร้างไฟล์ Excel ได้ กรุณาลองใหม่อีกครั้ง");
     return;
@@ -342,7 +342,46 @@ function exportStockToExcel(products, branches, settings) {
   }));
   XLSX.utils.book_append_sheet(wb, wsLow, "สินค้าใกล้หมด");
   const stamp = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `สต็อกสินค้า-${stamp}.xlsx`);
+  const filename = `สต็อกสินค้า-${stamp}.xlsx`;
+  const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const buf = XLSX.write(wb, {
+    bookType: "xlsx",
+    type: "array"
+  });
+  const blob = new Blob([buf], {
+    type: mime
+  });
+
+  // มือถือ/ไอแพด (โดยเฉพาะ Safari บน iOS) มักไม่รองรับการ "ดาวน์โหลดไฟล์" แบบอัตโนมัติ
+  // ถ้าเครื่องรองรับ Web Share API แบบแชร์ไฟล์ ให้เปิดหน้าต่างแชร์/บันทึกให้ผู้ใช้เลือกเองก่อน
+  try {
+    const file = new File([blob], filename, {
+      type: mime
+    });
+    if (navigator.canShare && navigator.canShare({
+      files: [file]
+    })) {
+      await navigator.share({
+        files: [file],
+        title: filename
+      });
+      return;
+    }
+  } catch (err) {
+    // ผู้ใช้กดยกเลิกหน้าต่างแชร์เอง ไม่ต้องดาวน์โหลดซ้ำ
+    if (err && err.name === "AbortError") return;
+    console.error("แชร์ไฟล์ Excel ไม่สำเร็จ ใช้วิธีดาวน์โหลดแทน:", err);
+  }
+
+  // อุปกรณ์อื่น ๆ (Android / เดสก์ท็อป): ดาวน์โหลดผ่านลิงก์ชั่วคราวตามปกติ
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 const DEFAULT_MIN_UNIT = 5;
 const DEFAULT_MIN_TOTAL = 10;
@@ -696,6 +735,19 @@ function StockApp() {
     name,
     prefix
   }]);
+  // แก้ไขชื่อหมวดหมู่ — อัปเดตทั้งรายการหมวดหมู่และหมวดหมู่ของสินค้าทุกชิ้นที่ใช้ชื่อเดิมให้ตรงกัน
+  const renameCategory = (oldName, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    setCategories(prev => prev.some(c => c.name === trimmed) ? prev.filter(c => c.name !== oldName) : prev.map(c => c.name === oldName ? {
+      ...c,
+      name: trimmed
+    } : c));
+    setProducts(prev => prev.map(p => p.category === oldName ? {
+      ...p,
+      category: trimmed
+    } : p));
+  };
   const commitMove = (product, branchId, type, qty, note) => {
     if (!qty || qty <= 0) return {
       ok: false,
@@ -1017,14 +1069,19 @@ function StockApp() {
     branches: branches,
     categories: categories,
     onAddCategory: addCategory,
+    onRenameCategory: renameCategory,
     products: products,
     onClose: () => setShowAdd(false),
-    onSave: addProduct
+    onSave: patch => {
+      addProduct(patch);
+      setShowAdd(false);
+    }
   }), editProduct && /*#__PURE__*/React.createElement(ProductModal, {
     mode: "edit",
     branches: branches,
     categories: categories,
     onAddCategory: addCategory,
+    onRenameCategory: renameCategory,
     products: products,
     product: editProduct,
     onClose: () => setEditProduct(null),
@@ -1092,7 +1149,7 @@ function Dashboard({
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-6 sm:space-y-8"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 lg:gap-5"
+    className: "grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-5"
   }, /*#__PURE__*/React.createElement(HangTag, {
     className: "p-4 pt-5 sm:p-5 sm:pt-6"
   }, /*#__PURE__*/React.createElement("p", {
@@ -1173,7 +1230,7 @@ function Dashboard({
       background: C.denim
     }
   })))))), /*#__PURE__*/React.createElement("div", {
-    className: "grid md:grid-cols-2 gap-5 sm:gap-6"
+    className: "grid lg:grid-cols-2 gap-5 sm:gap-6"
   }, /*#__PURE__*/React.createElement(HangTag, {
     className: "p-5 pt-6 sm:p-6 sm:pt-7"
   }, /*#__PURE__*/React.createElement("div", {
@@ -1324,16 +1381,28 @@ function StockView({
     }
   }, "✎")))), /*#__PURE__*/React.createElement("div", {
     className: "flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "relative w-full sm:max-w-xs"
   }, /*#__PURE__*/React.createElement("input", {
     value: search,
     onChange: e => setSearch(e.target.value),
     placeholder: "ค้นหาชื่อสินค้า, SKU หรือหมวดหมู่…",
-    className: "w-full sm:max-w-xs px-4 py-2.5 sm:py-2 rounded-md border tag-font-body text-sm",
+    className: "w-full px-4 py-2.5 sm:py-2 rounded-md border tag-font-body text-sm",
     style: {
       borderColor: C.line,
-      background: "#FFFFFF"
+      background: "#FFFFFF",
+      paddingRight: search ? "2.25rem" : undefined
     }
-  }), /*#__PURE__*/React.createElement("select", {
+  }), search && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setSearch(""),
+    title: "ล้างคำค้นหา",
+    className: "absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-xs",
+    style: {
+      background: C.paperDark,
+      color: C.brassDark
+    }
+  }, "\u2715")), /*#__PURE__*/React.createElement("select", {
     value: statusFilter,
     onChange: e => setStatusFilter(e.target.value),
     className: "px-3 py-2.5 sm:py-2 rounded-md border tag-font-body text-sm flex-shrink-0",
@@ -1373,7 +1442,7 @@ function StockView({
       color: C.brassDark
     }
   }, "ไม่พบสินค้าตรงกับคำค้นหา")), products.length > 0 && /*#__PURE__*/React.createElement(HangTag, {
-    className: "hidden md:block overflow-hidden"
+    className: "hidden lg:block overflow-hidden"
   }, /*#__PURE__*/React.createElement("div", {
     className: "overflow-x-auto"
   }, /*#__PURE__*/React.createElement("div", {
@@ -1471,7 +1540,7 @@ function StockView({
       title: "ลบสินค้า"
     }, "ลบ")));
   }))))), products.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "md:hidden space-y-3"
+    className: "lg:hidden space-y-3"
   }, products.map(p => {
     const total = combinedQty(p);
     return /*#__PURE__*/React.createElement(HangTag, {
@@ -1589,16 +1658,28 @@ function HistoryView({
     className: "space-y-4 sm:space-y-5"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "relative w-full sm:max-w-xs"
   }, /*#__PURE__*/React.createElement("input", {
     value: q,
     onChange: e => setQ(e.target.value),
     placeholder: "ค้นหาสินค้า หรือ SKU…",
-    className: "w-full sm:max-w-xs px-4 py-2.5 sm:py-2 rounded-md border tag-font-body text-sm",
+    className: "w-full px-4 py-2.5 sm:py-2 rounded-md border tag-font-body text-sm",
     style: {
       borderColor: C.line,
-      background: "#FFFFFF"
+      background: "#FFFFFF",
+      paddingRight: q ? "2.25rem" : undefined
     }
-  }), /*#__PURE__*/React.createElement("div", {
+  }), q && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setQ(""),
+    title: "ล้างคำค้นหา",
+    className: "absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-xs",
+    style: {
+      background: C.paperDark,
+      color: C.brassDark
+    }
+  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
     className: "flex gap-2"
   }, /*#__PURE__*/React.createElement("select", {
     value: branchFilter,
@@ -1699,7 +1780,7 @@ function HistoryView({
       color: C.brassDark
     }
   }, "ยังไม่มีประวัติการเคลื่อนไหวตามเงื่อนไขนี้")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(HangTag, {
-    className: "hidden md:block overflow-hidden"
+    className: "hidden lg:block overflow-hidden"
   }, /*#__PURE__*/React.createElement("div", {
     className: "grid tag-font-mono text-xs uppercase tracking-wide px-5 py-3",
     style: {
@@ -1760,7 +1841,7 @@ function HistoryView({
       color: C.wine
     }
   }, "\u2715")))))), /*#__PURE__*/React.createElement("div", {
-    className: "md:hidden space-y-3"
+    className: "lg:hidden space-y-3"
   }, rows.map(t => /*#__PURE__*/React.createElement(HangTag, {
     key: t.id,
     className: "p-4 pt-5"
@@ -2055,6 +2136,7 @@ function ProductModal({
   branches,
   categories,
   onAddCategory,
+  onRenameCategory,
   product,
   products,
   onClose,
@@ -2068,6 +2150,8 @@ function ProductModal({
   const [addingCat, setAddingCat] = useState(false);
   const [newCat, setNewCat] = useState("");
   const [newCatPrefix, setNewCatPrefix] = useState("");
+  const [renamingCat, setRenamingCat] = useState(false);
+  const [renameCatValue, setRenameCatValue] = useState("");
   const [price, setPrice] = useState(product ? String(product.price) : "");
   const [size, setSize] = useState(product?.size || "");
   const [chest, setChest] = useState(product?.chest || "");
@@ -2126,6 +2210,16 @@ function ProductModal({
     onAddCategory(trimmedName, prefix);
     setCategory(trimmedName);
     setAddingCat(false);
+  };
+  const confirmRenameCategory = () => {
+    const trimmed = renameCatValue.trim();
+    if (!trimmed || trimmed === category) {
+      setRenamingCat(false);
+      return;
+    }
+    onRenameCategory(category, trimmed);
+    setCategory(trimmed);
+    setRenamingCat(false);
   };
   const save = () => {
     if (!canSave) return;
@@ -2245,10 +2339,12 @@ function ProductModal({
     style: {
       color: C.brassDark
     }
-  }, "หมวดหมู่"), !addingCat ? /*#__PURE__*/React.createElement("select", {
+  }, "หมวดหมู่"), !addingCat && !renamingCat ? /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, /*#__PURE__*/React.createElement("select", {
     value: category,
     onChange: e => handleCategoryChange(e.target.value),
-    className: "w-full px-3 py-2.5 rounded border text-base",
+    className: "flex-1 min-w-0 px-3 py-2.5 rounded border text-base",
     style: {
       borderColor: C.line
     }
@@ -2257,7 +2353,62 @@ function ProductModal({
     value: c.name
   }, c.name)), /*#__PURE__*/React.createElement("option", {
     value: NEW_CAT_VALUE
-  }, "+ เพิ่มหมวดหมู่ใหม่…")) : /*#__PURE__*/React.createElement("div", {
+  }, "+ เพิ่มหมวดหมู่ใหม่…")), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setRenameCatValue(category);
+      setRenamingCat(true);
+    },
+    disabled: !category,
+    title: "แก้ไขชื่อหมวดหมู่",
+    className: "w-11 flex-shrink-0 rounded border flex items-center justify-center text-sm disabled:opacity-40",
+    style: {
+      borderColor: C.line,
+      color: C.brassDark
+    }
+  }, "\u270E")) : renamingCat ? /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2 p-3 rounded-md",
+    style: {
+      background: C.paperDark
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block mb-1 text-xs",
+    style: {
+      color: C.brassDark
+    }
+  }, "แก้ไขชื่อหมวดหมู่"), /*#__PURE__*/React.createElement("input", {
+    value: renameCatValue,
+    onChange: e => setRenameCatValue(e.target.value),
+    autoFocus: true,
+    className: "w-full px-3 py-2 rounded border text-base",
+    style: {
+      borderColor: C.line,
+      background: "#FFF"
+    }
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "tag-font-mono text-[11px]",
+    style: {
+      color: C.brassDark
+    }
+  }, "สินค้าทุกชิ้นในหมวดหมู่นี้จะเปลี่ยนชื่อหมวดหมู่ตามไปด้วย"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2 pt-1"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: confirmRenameCategory,
+    className: "flex-1 px-3 py-2 rounded-md text-sm font-medium",
+    style: {
+      background: C.brass,
+      color: C.ink
+    }
+  }, "บันทึกชื่อ"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setRenamingCat(false),
+    className: "flex-1 px-3 py-2 rounded-md text-sm border",
+    style: {
+      borderColor: C.line,
+      background: "#FFF"
+    }
+  }, "ยกเลิก"))) : /*#__PURE__*/React.createElement("div", {
     className: "space-y-2 p-3 rounded-md",
     style: {
       background: C.paperDark
