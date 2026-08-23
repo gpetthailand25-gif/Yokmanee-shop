@@ -1,22 +1,16 @@
 {
   "short_name": "หยกมณี",
-  "name": "Yokmanee Shop - ระบบจัดการร้านค้า",
+  "name": "ระบบจัดการสต็อกร้านหยกมณี",
   "icons": [
     {
-      "src": "./icon-192.png",
-      "type": "image/png",
-      "sizes": "192x192",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "./icon-512.png",
+      "src": "https://cdn-icons-png.flaticon.com/512/3081/3081559.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any maskable"
     }
   ],
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "/Yokmanee-shop/",
+  "scope": "/Yokmanee-shop/",
   "background_color": "#ffffff",
   "theme_color": "#000000",
   "display": "standalone",
