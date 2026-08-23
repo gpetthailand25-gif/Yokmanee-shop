@@ -16,7 +16,6 @@ import React from "https://esm.sh/react@18";
 import ReactDOM from "https://esm.sh/react-dom@18/client";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-storage.js";
 
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -32,7 +31,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const storage = getStorage(app);
 
 // เก็บข้อมูลทั้งหมดของร้านไว้ที่เอกสารเดียว: stock/main
 const STOCK_DOC = doc(db, "stock", "main");
@@ -351,43 +349,6 @@ function readAndResizeImage(file, {
     reader.readAsDataURL(file);
   });
 }
-function dataUrlToBlob(dataUrl) {
-  const [meta, b64] = dataUrl.split(",");
-  const mime = meta.match(/:(.*?);/)[1];
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], {
-    type: mime
-  });
-}
-
-// ย่อ+บีบภาพในเครื่องก่อน แล้วค่อยอัปโหลดขึ้น Firebase Storage
-// คืนค่า { url, path } — url ไว้แสดงรูป, path ไว้ใช้ลบไฟล์เก่าตอนเปลี่ยน/ลบรูป
-async function uploadProductImage(file) {
-  const dataUrl = await readAndResizeImage(file, {
-    maxSize: 480,
-    quality: 0.8,
-    maxBytes: 400 * 1024
-  });
-  const blob = dataUrlToBlob(dataUrl);
-  const path = `products/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
-  const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, blob, {
-    contentType: "image/jpeg"
-  });
-  const url = await getDownloadURL(storageRef);
-  return {
-    url,
-    path
-  };
-}
-
-// ลบไฟล์เก่าออกจาก Storage แบบ best-effort (ไม่ต้องรอ ไม่ต้องกังวลถ้าล้มเหลว)
-function deleteProductImage(path) {
-  if (!path) return;
-  deleteObject(ref(storage, path)).catch(() => {});
-}
 function HangTag({
   children,
   className = "",
@@ -575,11 +536,7 @@ function StockApp() {
     return () => clearTimeout(saveTimer.current);
   }, [products, transactions, branches, categories, settings, loaded]);
   const branchName = id => branches.find(b => b.id === id)?.name || id;
-  const removeProduct = id => setProducts(prev => {
-    const target = prev.find(p => p.id === id);
-    if (target?.imagePath) deleteProductImage(target.imagePath);
-    return prev.filter(p => p.id !== id);
-  });
+  const removeProduct = id => setProducts(prev => prev.filter(p => p.id !== id));
   const addProduct = p => setProducts(prev => [{
     ...p,
     id: "p" + Date.now()
@@ -701,7 +658,7 @@ function StockApp() {
       background: C.ink
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "max-w-6xl mx-auto px-4 sm:px-5 py-3 sm:py-5 flex items-center justify-between gap-3"
+    className: "max-w-6xl xl:max-w-[1360px] 2xl:max-w-[1520px] mx-auto px-4 sm:px-5 lg:px-8 py-3 sm:py-5 flex items-center justify-between gap-3"
   }, /*#__PURE__*/React.createElement("div", {
     className: "min-w-0"
   }, /*#__PURE__*/React.createElement("p", {
@@ -743,7 +700,7 @@ function StockApp() {
   }, t.icon), /*#__PURE__*/React.createElement("span", {
     className: "text-[11px]"
   }, t.label)))), /*#__PURE__*/React.createElement("main", {
-    className: "max-w-6xl mx-auto px-4 sm:px-5 py-6 sm:py-8 pb-24 sm:pb-8"
+    className: "max-w-6xl xl:max-w-[1360px] 2xl:max-w-[1520px] mx-auto px-4 sm:px-5 lg:px-8 py-6 sm:py-8 pb-24 sm:pb-8"
   }, view === "dashboard" && /*#__PURE__*/React.createElement(Dashboard, {
     stats: stats,
     transactions: transactions,
@@ -847,7 +804,7 @@ function Dashboard({
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-6 sm:space-y-8"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4"
+    className: "grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 lg:gap-5"
   }, /*#__PURE__*/React.createElement(HangTag, {
     className: "p-4 pt-5 sm:p-5 sm:pt-6"
   }, /*#__PURE__*/React.createElement("p", {
@@ -1102,6 +1059,10 @@ function StockView({
   }, "ไม่พบสินค้าตรงกับคำค้นหา")), products.length > 0 && /*#__PURE__*/React.createElement(HangTag, {
     className: "hidden md:block overflow-hidden"
   }, /*#__PURE__*/React.createElement("div", {
+    className: "overflow-x-auto"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "min-w-[720px]"
+  }, /*#__PURE__*/React.createElement("div", {
     className: "grid tag-font-mono text-xs uppercase tracking-wide px-5 py-3",
     style: {
       gridTemplateColumns: branch === "all" ? `2.2fr 0.7fr ${branches.map(() => "1.2fr").join(" ")} 0.9fr 1fr` : "2.6fr 0.7fr 1.2fr 0.9fr 1fr",
@@ -1180,7 +1141,7 @@ function StockView({
       },
       title: "ลบสินค้า"
     }, "ลบ")));
-  }))), products.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }))))), products.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "md:hidden space-y-3"
   }, products.map(p => {
     const total = combinedQty(p);
@@ -1518,7 +1479,6 @@ function ProductModal({
   const [size, setSize] = useState(product?.size || "");
   const [chest, setChest] = useState(product?.chest || "");
   const [image, setImage] = useState(product?.image || null);
-  const [imagePath, setImagePath] = useState(product?.imagePath || null);
   const [stock, setStock] = useState(() => {
     const base = {};
     branches.forEach(b => {
@@ -1536,33 +1496,26 @@ function ProductModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, categories.length]);
   const canSave = name.trim() && sku.trim() && price !== "";
+
+  // ย่อ+บีบรูปในเครื่อง แล้วเก็บเป็น base64 ตรงลง Firestore (ไม่ต้องใช้ Firebase Storage ที่ต้องอัปเกรดแผนเสียเงิน)
   const handleFile = async e => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     setUploadError("");
     try {
-      // กันไม่ให้ค้างตลอดไปถ้าเน็ตช้า/บล็อก — ยกเลิกเองหลัง 20 วินาที
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("หมดเวลาอัปโหลด (เกิน 20 วินาที) — เช็คอินเทอร์เน็ต หรือว่าเปิดใช้งาน Firebase Storage ในคอนโซลแล้วหรือยัง")), 20000));
-      const {
-        url,
-        path
-      } = await Promise.race([uploadProductImage(file), timeout]);
-      // ลบรูปเก่าออกจาก Storage เพื่อไม่ให้ไฟล์ค้าง (ถ้ามี)
-      if (imagePath) deleteProductImage(imagePath);
-      setImage(url);
-      setImagePath(path);
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("การประมวลผลรูปใช้เวลานานเกินไป ลองใหม่อีกครั้งหรือใช้รูปที่มีขนาดไฟล์เล็กลง")), 20000));
+      const dataUrl = await Promise.race([readAndResizeImage(file), timeout]);
+      setImage(dataUrl);
     } catch (err) {
-      console.error("อัปโหลดรูปภาพไม่สำเร็จ:", err);
-      setUploadError(err?.message || "อัปโหลดรูปภาพไม่สำเร็จ ลองใหม่อีกครั้ง");
+      console.error("ประมวลผลรูปภาพไม่สำเร็จ:", err);
+      setUploadError(err?.message || "ประมวลผลรูปภาพไม่สำเร็จ ลองใหม่อีกครั้ง");
     }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
   };
   const handleRemoveImage = () => {
-    if (imagePath) deleteProductImage(imagePath);
     setImage(null);
-    setImagePath(null);
   };
   const handleCategoryChange = val => {
     if (val === NEW_CAT_VALUE) {
@@ -1589,7 +1542,6 @@ function ProductModal({
       category,
       price: parseFloat(price) || 0,
       image,
-      imagePath,
       size: size.trim() || null,
       chest: chest.trim() ? chest.trim() : null
     };
