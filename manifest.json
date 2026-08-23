@@ -3,7 +3,7 @@
   "name": "ระบบจัดการสต็อกร้านหยกมณี",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3081/3081559.png",
+      "src": "./icon-512.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any maskable"
